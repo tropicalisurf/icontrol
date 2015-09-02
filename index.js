@@ -53,26 +53,6 @@ iControl.ArmState = {
   ARMED_STAY: "stay"
 }
 
-iControl.prototype.login = function(callback) {
-  
-  // login already in progress?
-  if (this._loggingIn) {
-    // try again when we're logged in
-    callback && this._loginCompleteCallbacks.push(callback);
-    return;
-  }
-  
-  this._loggingIn = true;
-  this._beginLogin();
-}
-
-// called way down below when we're done with the oauth dance
-iControl.prototype._loginComplete = function() {
-  this._loggingIn = false;
-  this._loginCompleteCallbacks.forEach(function(callback) { callback(); });
-  this._loginCompleteCallbacks = [];
-}
-
 iControl.prototype.getArmState = function(callback) {
   debug("Requesting current arm state..");
   
@@ -113,9 +93,79 @@ iControl.prototype.setArmState = function(armState, callback) {
   }.bind(this));
 }
 
+iControl.prototype.subscribeEvents = function(callback) {
+  
+  this._makeAuthenticatedRequest({path: "eventStream/links/:site"}, function(err, links) {
+    if (err) return callback && callback(err);
+    
+    var link = links[0];
+    var url = link.href;
+    
+    debug("Opening websocket...");
+    var ws = new WebSocket(url);
+    
+    ws.on('open', function() {
+      debug("Websocket connection open.");
+    }.bind(this));
+    
+    ws.on('message', function(data, flags) {
+      
+      var events = JSON.parse(data);
+      for (var i in events) {
+        var eventData = events[i];
+        
+        // looking for events like "event/xyz" i.e. "event/armDisarm"
+        if (eventData.mediaType == "event/securityStateChange") {
+          
+          var armType = eventData.properties.armType; // "away", "night", "stay", or null (disarmed)
+          var armState = armType || "disarmed";
+          this.emit('change', armState);
+        }
+      }
+      
+    }.bind(this));
+    
+    ws.on('close', function() {
+      
+      debug("Websocket connection closed. Reconnecting in 5 seconds...");
+      setTimeout(this._subscribeEvents.bind(this), 5000);
+      
+    }.bind(this));
+
+    ws.on('error', function(err) {
+      
+      debug("Websocket error: %s. Reconnecting in 5 seconds...", err.message);
+      ws.close();
+      setTimeout(this._subscribeEvents.bind(this), 5000);
+      
+    }.bind(this));
+
+  }.bind(this));
+}
+
 /**
  * Login Process
  */
+
+ iControl.prototype.login = function(callback) {
+
+   // queue this callback for when we're finished logging in
+   if (callback)
+     this._loginCompleteCallbacks.push(callback);
+   
+   // begin logging in if we're not already doing so
+   if (!this._loggingIn) {
+     this._loggingIn = true;
+     this._beginLogin();
+   }
+ }
+
+ // called way down below when we're done with the oauth dance
+ iControl.prototype._loginComplete = function(err) {
+   this._loggingIn = false;
+   this._loginCompleteCallbacks.forEach(function(callback) { callback(err); });
+   this._loginCompleteCallbacks = [];
+ }
 
 iControl.prototype._beginLogin = function() {
   
@@ -165,7 +215,8 @@ iControl.prototype._beginLogin = function() {
       this._submitLoginPage(action, form);
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }
   }.bind(this));
 }
@@ -183,7 +234,8 @@ iControl.prototype._submitLoginPage = function(url, form) {
       this._getAuthorizationCode(location);
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }
   }.bind(this));
 }
@@ -206,7 +258,8 @@ iControl.prototype._getAuthorizationCode = function(url) {
       this._getAccessToken(code);
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }
   }.bind(this));
 }
@@ -270,7 +323,8 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
       this._beginLogin();
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }
     
   }.bind(this));
@@ -311,7 +365,8 @@ iControl.prototype._activateRestAPI = function() {
       this._beginLogin();
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }    
     
   }.bind(this));
@@ -354,22 +409,30 @@ iControl.prototype._findPanel = function() {
       this._loginComplete();      
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
+      this._loginComplete(err);
     }    
     
   }.bind(this));
 }
 
 /**
- * All "logged in" requests
+ * Helper method for making a request that requires login (will login first if necessary).
  */
 
 iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
 
+  // if we're currenly logging in, then call login() to defer this method - also call login
+  // if we don't even have an access token (meaning we've never logged in this session)
   if (this._loggingIn || !this._accessToken) {
     // try again when we're logged in
     debug("Deferring request '%s' until login complete.", path);
-    this.login(function() { this._makeAuthenticatedRequest(path, callback); }.bind(this));
+    
+    this.login(function(err) {
+      if (err) return callback(err);
+      this._makeAuthenticatedRequest(path, callback); // login successful - try again!
+    }.bind(this));
+    
     return;
   }
 
@@ -389,71 +452,20 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
       this._accessTokenExpires = null;
       
       // try again when we're logged in
-      this.login(function() { this._makeAuthenticatedRequest(req, callback); }.bind(this));
+      this.login(function(err) {
+        if (err) return callback(err);
+        this._makeAuthenticatedRequest(path, callback); // login successful - try again!
+      }.bind(this));
     }
     else {
-      this._handleError(err, response, body);
+      this._notifyError(err, response, body);
       callback(err);
     }    
     
   }.bind(this));
 }
 
-iControl.prototype.subscribeEvents = function(callback) {
-  
-  this._makeAuthenticatedRequest({path: "eventStream/links/:site"}, function(err, links) {
-    if (err) return callback && callback(err);
-    
-    var link = links[0];
-    var url = link.href;
-    
-    debug("Opening websocket...");
-    var ws = new WebSocket(url);
-    
-    ws.on('open', function() {
-      debug("Websocket connection open.");
-    }.bind(this));
-    
-    ws.on('message', function(data, flags) {
-      
-      var events = JSON.parse(data);
-      for (var i in events) {
-        var eventData = events[i];
-        
-        // looking for events like "event/xyz" i.e. "event/armDisarm"
-        if (eventData.mediaType == "event/securityStateChange") {
-          
-          var armType = eventData.properties.armType; // "away", "night", "stay", or null (disarmed)
-          var armState = armType || "disarmed";
-          this.emit('change', armState);
-        }
-      }
-      
-    }.bind(this));
-    
-    ws.on('close', function() {
-      
-      debug("Websocket connection closed. Reconnecting in 5 seconds...");
-      setTimeout(this._subscribeEvents.bind(this), 5000);
-      
-    }.bind(this));
-
-    ws.on('error', function(err) {
-      
-      debug("Websocket error: %s. Reconnecting in 5 seconds...", err.message);
-      ws.close();
-      setTimeout(this._subscribeEvents.bind(this), 5000);
-      
-    }.bind(this));
-
-  }.bind(this));
-}
-
-iControl.prototype._handleError = function(err, response, body) {
+iControl.prototype._notifyError = function(err, response, body) {
   var message = format("There was an error while communicating with iControl. Status code was %s and error was: %s\nStack:%s\nResponse:\n%s", response && response.statusCode, err, new Error().stack, body);
   this.emit('error', new Error(message));
-  
-  // clear out any pending callbacks
-  this._loginCompleteCallbacks = [];
-  this._loggingIn = false;
 }
