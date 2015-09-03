@@ -1,7 +1,7 @@
 {
   "name": "node-icontrol",
   "description": "NodeJS module for controlling an iControl security system (like Xfinity Home)",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "repository": {
     "type": "git",
     "url": "git@github.com:nfarina/icontrol.git"

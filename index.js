@@ -454,7 +454,7 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
       // try again when we're logged in
       this.login(function(err) {
         if (err) return callback(err);
-        this._makeAuthenticatedRequest(path, callback); // login successful - try again!
+        this._makeAuthenticatedRequest(req, callback); // login successful - try again!
       }.bind(this));
     }
     else {
