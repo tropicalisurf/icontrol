@@ -426,11 +426,11 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
   // if we don't even have an access token (meaning we've never logged in this session)
   if (this._loggingIn || !this._accessToken) {
     // try again when we're logged in
-    debug("Deferring request '%s' until login complete.", path);
+    debug("Deferring request '%s' until login complete.", req.path);
     
     this.login(function(err) {
       if (err) return callback(err);
-      this._makeAuthenticatedRequest(path, callback); // login successful - try again!
+      this._makeAuthenticatedRequest(req, callback); // login successful - try again!
     }.bind(this));
     
     return;
