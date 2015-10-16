@@ -215,6 +215,7 @@ iControl.prototype._beginLogin = function() {
       this._submitLoginPage(action, form);
     }
     else {
+      err = err || new Error("Invalid response code " + response.statusCode)
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }
@@ -234,6 +235,7 @@ iControl.prototype._submitLoginPage = function(url, form) {
       this._getAuthorizationCode(location);
     }
     else {
+      err = err || new Error("Bad status code " + response.statusCode);
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }
@@ -258,6 +260,7 @@ iControl.prototype._getAuthorizationCode = function(url) {
       this._getAccessToken(code);
     }
     else {
+      err = err || new Error("Invalid status code " + response.statusCode);
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }
@@ -323,6 +326,7 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
       this._beginLogin();
     }
     else {
+      err = err || new Error("Invalid status code " + response.statusCode);
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }
@@ -365,6 +369,7 @@ iControl.prototype._activateRestAPI = function() {
       this._beginLogin();
     }
     else {
+      err = err || new Error("Invalid status code " + response.statusCode);
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }    
@@ -409,6 +414,7 @@ iControl.prototype._findPanel = function() {
       this._loginComplete();      
     }
     else {
+      err = err || new Error("Invalid status code " + response.statusCode);
       this._notifyError(err, response, body);
       this._loginComplete(err);
     }    
@@ -458,6 +464,7 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
       }.bind(this));
     }
     else {
+      err = err || new Error("Invalid status code " + response.statusCode);
       this._notifyError(err, response, body);
       callback(err);
     }    
